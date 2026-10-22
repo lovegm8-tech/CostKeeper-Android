@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
     private TextView text(String s,int sp,boolean bold){TextView v=new TextView(this);v.setText(s);v.setTextColor(DARK);v.setTextSize(sp); if(bold)v.setTypeface(null,Typeface.BOLD);return v;}
     private TextView note(String s){TextView v=text(s,12,false);v.setTextColor(MUTED);return v;}
     private Button button(String s,Runnable action) {
-        Button b=new Button(this);b.setText(s);b.setTextAllCaps(false);b.setTextColor(GREEN);b.setOnClickListener(v->action.run());return b;
+        Button b=new Button(this);b.setText(s);b.setAllCaps(false);b.setTextColor(GREEN);b.setOnClickListener(v->action.run());return b;
     }
     private void space(LinearLayout l,int height){ View v=new View(this); l.addView(v,new LinearLayout.LayoutParams(1,dp(height))); }
     private void heading(LinearLayout l,String s){TextView v=text(s,18,true);pad(v,0,12);l.addView(v);}
