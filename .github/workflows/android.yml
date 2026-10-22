@@ -33,11 +33,17 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
       - name: Compile unsigned release for offline signing
         run: gradle --no-daemon :app:assembleRelease
-      - name: Upload unsigned release artifact (no credentials)
+      - name: Include Android SDK APK v2 signer utility
+        run: |
+          test -f "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar"
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" app/build/outputs/apk/release/apksigner.jar
+      - name: Upload unsigned release and signer utility (no credentials)
         uses: actions/upload-artifact@v4
         with:
-          name: CostKeeper-v1.0.1-unsigned
-          path: app/build/outputs/apk/release/*-unsigned.apk
+          name: CostKeeper-v1.0.1-unsigned-and-sign-tool
+          path: |
+            app/build/outputs/apk/release/*-unsigned.apk
+            app/build/outputs/apk/release/apksigner.jar
           if-no-files-found: error
           retention-days: 1
 
