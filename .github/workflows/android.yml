@@ -31,6 +31,15 @@ jobs:
           "$SDKMGR" 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug for compile check only
         run: gradle --no-daemon :app:assembleDebug
+      - name: Compile unsigned release for offline signing
+        run: gradle --no-daemon :app:assembleRelease
+      - name: Upload unsigned release artifact (no credentials)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CostKeeper-v1.0.1-unsigned
+          path: app/build/outputs/apk/release/*-unsigned.apk
+          if-no-files-found: error
+          retention-days: 1
 
   signed-release:
     if: github.event_name == 'workflow_dispatch'
