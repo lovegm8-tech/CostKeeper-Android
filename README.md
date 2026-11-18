@@ -1,4 +1,4 @@
-# 餐飲成本管家 v1.0.1（Android 原生離線版）
+# 餐飲成本管家 v1.0.2（Android 原生離線版）
 
 本專案以使用者提供的兩張 Google Sheets 截圖為需求參考，將食材／包材進價、配方、渠道毛利、價格紀錄及月報拆開管理。
 
@@ -13,7 +13,10 @@
 - 食材進價／進貨規格變更紀錄
 - Android Keystore 本機 AES-256-GCM 加密；手動以密碼匯出／匯入加密備份
 - UTF-8 CSV 食材匯入（新增模式）
-- **v1.0.1：完整 Excel（.xlsx）雙向備份／還原**：以原生 Java 實作，不需網路或第三方套件。食材、餐點、配方明細、進價紀錄及銷售紀錄分工作表保存；匯入前驗證欄位、資料型別與配方關聯，顯示筆數並由店主確認覆蓋。
+- **v1.0.1 起：完整 Excel（.xlsx）雙向備份／還原**：以原生 Java 實作，不需網路或第三方套件。食材、餐點、配方明細、進價紀錄及銷售紀錄分工作表保存；匯入前驗證欄位、資料型別與配方關聯，顯示筆數並由店主確認覆蓋。
+- **v1.0.2：同一份配方兩套成本**：總部標準價與店內實際進價，切換查看各平台毛利；總部價未設定不假裝為零成本
+- **v1.0.2：進價歷史**：來源、生效日、登錄時間、供應商與備註；比較每克／每片等單位成本漲跌%，預覽受影響餐點的每份成本變化
+- **v1.0.2：Excel 備份 v3**：匯出雙來源價格及完整歷史，仍可匯入舊版備份 v2
 - 不要求 INTERNET 權限、無帳號、無雲端、停用系統 App 資料備份
 
 **請注意：** 售價、毛利分析仍是估算。未包含租金、人事、水電、稅金、耗損、折價券、平台其他服務費等。為求月報準確，必須逐筆或按日登記實際銷售數量；本版本不會自動讀取 POS。
@@ -22,32 +25,32 @@
 
 程式碼不包含來自截圖的真實成本數字。首次安裝為空白資料庫，保護營業資料。真實資料在手機手動輸入或從私有 CSV 匯入。
 加密金鑰儲存在 Android Keystore；加密資料儲存在私有 App 目錄，且 `allowBackup=false`。
-沒有網路傳輸的程式碼或 INTERNET 權限。使用者透過 Android 檔案選擇器自行匯出明文 CSV 或加密備份時，應自行保管檔案。
+沒有網路傳輸的程式碼或 INTERNET 權限。使用者透過 Android 檔案選擇器自行匯出明文 Excel 或加密備份時，應自行保管檔案。\n**目前雙成本切換不是 PIN 鎖**：能操作這支已解鎖手機的人仍能切換查看實際成本或匯出明文 Excel，不應把它當作可安全給外人查看的受限模式。
 
 ## 編譯方式（Android SDK 和網路依賴可用的電腦或 GitHub Actions）
 
 - JDK 17 / Gradle 8.11.1 / Android Gradle Plugin 8.9.2 / Android SDK 35
 - `gradle :app:assembleDebug` 只用於編譯驗證，不可拿 Debug APK 取代正式簽章版。
 - 正式簽章版：環境變數 `COSTKEEPER_KEYSTORE_PATH`、`COSTKEEPER_STORE_PASSWORD`、`COSTKEEPER_KEY_PASSWORD`、`COSTKEEPER_KEY_ALIAS` 全部提供，再執行 `gradle :app:assembleRelease`。
-- GitHub Actions 的 `workflow_dispatch` 手動觸發後使用四組 GitHub Secrets：`COSTKEEPER_KEYSTORE_B64`、`COSTKEEPER_STORE_PASSWORD`、`COSTKEEPER_KEY_PASSWORD`、`COSTKEEPER_KEY_ALIAS`；完成後在 Artifact 下載正式簽章 APK。
+- GitHub Actions 的 `workflow_dispatch` 手動觸發後使用四組 GitHub Secrets：`COSTKEEPER_KEYSTORE_B64`、`COSTKEEPER_STORE_PASSWORD`、`COSTKEEPER_KEY_PASSWORD`、`COSTKEEPER_KEY_ALIAS`；完成後在 Artifact 下載正式簽章 APK；**若未設定 Secrets 此工作流程無法產生正式已簽 APK**。也可在非 GitHub 環境使用既有固定私鑰簽署未簽章 Release APK。
 - **正式簽章 `*.jks / *.p12` 和密碼絕對不能提交到 GitHub。** 請妥善保存提供的私有簽章資料包，在下一版繼續使用同一組簽章。Github Secrets 必須配置在你另外建立的新專案。
 
 ## 固定版本資訊
 
 - Application ID: `tw.costkeeper.restaurant`
 - v1.0.0：`versionCode = 1`、`versionName = 1.0.0`（開發基線）
-- v1.0.1：`versionCode = 2`、`versionName = 1.0.1`（新增 Excel 完整備份、還原）
+- v1.0.1：`versionCode = 2`、`versionName = 1.0.1`（新增 Excel 完整備份、還原）\n- v1.0.2：`versionCode = 3`、`versionName = 1.0.2`（雙成本與進價歷史，Excel v3）
 - 下一版需繼續遞增 `versionCode`，但 **Application ID 與簽章不可變動**。
 - 請直接安裝新版 APK 覆蓋舊版，**不要解除安裝**（解除安裝通常會清除離線資料）。
 - 更新前先在 App 匯出密碼加密備份。
 
-## Excel 完整備份與換機（v1.0.1）
+## Excel 完整備份與換機（v1.0.2 / Excel v3）
 
 在 App **備份** 頁面按「↓ 匯出完整 Excel 試算表」，使用 Android 的檔案儲存介面，選擇「下載」或私人目錄，產生 `.xlsx`。新手機安裝相同 App 後，按「↑ 從完整 Excel 還原（換手機）」選檔、確認筆數、覆蓋還原。**不必有舊手機 App 金鑰或網路**。
 
 檔案內有六個工作表：**使用說明、食材、餐點、配方明細、進價紀錄、銷售紀錄**。其中 `ID`、配方引用 `餐點ID/食材ID` 是資料關聯鍵，請勿修改；單位成本、配方成本、店內毛利等「參考」欄可檢視，但還原後會以食材／配方重新計算。店主可編輯食材進價、每份用量、售價後再匯入。
 
-注意：**完整還原只支援本 App 匯出的標準 .xlsx 格式，不支援任意 Excel 自動還原整庫**；一般試算表可先使用食材 CSV 匯入。Excel 為明文，未加密，包含成本、售價與毛利。建議同時保留具密碼的 `.costbackup` 作為保密備份。詳細操作見 `docs/EXCEL_TRANSFER.md`。
+注意：**完整還原只支援本 App 匯出的標準 .xlsx 格式，不支援任意 Excel 自動還原整庫**；一般試算表可先使用食材 CSV 匯入。Excel 為明文，未加密，包含成本、售價與毛利。建議同時保留具密碼的 `.costbackup` 作為保密備份。詳細操作見 `docs/EXCEL_TRANSFER.md`，雙成本規格與測試案例見 `docs/DUAL_COST_V1_0_2.md`。
 
 ## 食材 CSV 格式
 
