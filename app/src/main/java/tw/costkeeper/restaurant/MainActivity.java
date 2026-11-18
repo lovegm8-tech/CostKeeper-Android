@@ -95,6 +95,61 @@ public class MainActivity extends Activity {
     private JSONArray recipes(){return db.optJSONArray("recipes");}
     private JSONArray sales(){return db.optJSONArray("sales");}
     private JSONArray purchases(){return db.optJSONArray("purchases");}
+    private JSONObject monthlyExpenses() {
+        JSONObject all=db.optJSONObject("monthlyExpenses");
+        if(all==null){all=new JSONObject();try{db.put("monthlyExpenses",all);}catch(Exception e){throw new IllegalStateException(e);}}
+        return all;
+    }
+    private void showOperatingExpenses(){
+        String key=month.toString();
+        JSONObject current=monthlyExpenses().optJSONObject(key);
+        LinearLayout form=column();pad(form,18,12);
+        form.addView(note("按月記錄固定營運費用。留空代表尚未確認；確認沒有費用請填 0。金額均為當月新台幣。"));
+        String[] keys={"rent","labor","utilities","other"};
+        String[] labels={"租金","人工","水電","其他固定營運費用"};
+        EditText[] fields=new EditText[keys.length];
+        for(int i=0;i<keys.length;i++){
+            form.addView(note(labels[i]));
+            fields[i]=edit(labels[i],current!=null&&current.has(keys[i])?num(current.optDouble(keys[i])):"",true);
+            form.addView(fields[i]);
+        }
+        new AlertDialog.Builder(this).setTitle(key+" 營運費用").setView(form)
+            .setPositiveButton("儲存",(d,w)->{
+                try{
+                    JSONObject entry=new JSONObject();
+                    for(int i=0;i<keys.length;i++){
+                        String raw=fields[i].getText().toString().trim();
+                        if(raw.isEmpty())continue;
+                        double amount=Double.parseDouble(raw);
+                        if(!Double.isFinite(amount)||amount<0)throw new IllegalArgumentException(labels[i]+"必須是非負數");
+                        entry.put(keys[i],amount);
+                    }
+                    monthlyExpenses().put(key,entry);commit();
+                }catch(Exception e){toast("無法儲存營運費用："+e.getMessage());}
+            }).setNegativeButton("取消",null).show();
+    }
+    private void showOperatingProfit(LinearLayout section,double contribution){
+        JSONObject entry=monthlyExpenses().optJSONObject(month.toString());
+        String[] keys={"rent","labor","utilities","other"};
+        String[] labels={"租金","人工","水電","其他固定營運費用"};
+        double total=0;boolean complete=true;
+        heading(section,"整店營業利益");
+        for(int i=0;i<keys.length;i++){
+            boolean known=entry!=null&&entry.has(keys[i]);
+            if(!known)complete=false;
+            double amount=known?entry.optDouble(keys[i]):0;
+            if(known)total+=amount;
+            section.addView(text(labels[i]+"："+(known?money(amount):"未記錄"),14,false));
+        }
+        section.addView(button("編輯 "+month+" 營運費用",this::showOperatingExpenses));
+        if(complete){
+            heading(section,"已記錄費用後營業利益估算："+money(contribution-total));
+            section.addView(note("仍需確認銷售是否完整、稅費、損耗及其他未列費用；不是稅後淨利。"));
+        }else{
+            heading(section,"營業利益：資料未完整");
+            section.addView(note("已確認固定費用合計 "+money(total)+"；缺少的費用不能視為 0。"));
+        }
+    }
     private JSONObject findFood(String id){return CostMath.find(items(),id);}
     private JSONObject findRecipe(String id){return CostMath.find(recipes(),id);}
     private String shownMoney(double x){return Double.isFinite(x)?money(x):"總部價格未設定";}
@@ -163,8 +218,8 @@ public class MainActivity extends Activity {
         heading(s,"本月銷售紀錄 · "+month);
         s.addView(text("已登記 "+qty+" 份     收入 "+money(total),14,false));
         s.addView(text("食材／包材成本 "+money(cost),14,false));
-        s.addView(text("扣平台費後毛利 "+money(total-fees-cost),17,true));
-        s.addView(note("不包含房租、人事、水電、稅金及未輸入的營業費用。"));
+        s.addView(text("扣食材及平台費後貢獻毛利 "+money(total-fees-cost),17,true));
+        s.addView(note("此數字尚未扣除固定營運費用，並非淨利；請至報表頁檢視整店營業利益。"));
         LinearLayout x=section();heading(x,"快速操作");bar(x,"＋ 新增食材",()->showIngredientEditor(null));
         bar(x,"＋ 新增餐點",()->showRecipeEditor(null));bar(x,"＋ 登記銷售",this::showSaleEditor);
         LinearLayout r=section();heading(r,"餐點成本預覽");
@@ -173,7 +228,7 @@ public class MainActivity extends Activity {
             JSONObject f=recipes().optJSONObject(i);if(f==null)continue;
             double c=CostMath.recipeCost(f,db,costSource),p=f.optDouble("price",0);
             bar(r,f.optString("name")+" · "+PriceHistory.label(costSource)+"成本 "+shownMoney(c)
-                +" · 毛利 "+(Double.isFinite(c)?money(p-c):"待補總部價"),()->showRecipeDetail(f.optString("id")));
+                +" · 扣食材後餘額 "+(Double.isFinite(c)?money(p-c):"待補總部價"),()->showRecipeDetail(f.optString("id")));
         }
     }
     private void drawIngredients(){
@@ -506,8 +561,9 @@ public class MainActivity extends Activity {
         }
         s.addView(text("銷售份數："+count,15,false));s.addView(text("營業額："+money(gross),15,false));
         s.addView(text("食材與包材："+money(cost),15,false));s.addView(text("平台抽成："+money(fee),15,false));
-        heading(s,"估算毛利："+money(gross-fee-cost));
-        s.addView(note("毛利不等於淨利。未計入租金、人事、水電、營業稅、平台其他費用、損耗及未登記銷售。"));
+        heading(s,"全店貢獻毛利："+money(gross-fee-cost));
+        s.addView(note("以已登記銷售的食材／包材成本及平台抽成計算；未扣固定營運費用。"));
+        showOperatingProfit(s,gross-fee-cost);
         s.addView(button("＋ 登記一筆銷售",this::showSaleEditor));
         LinearLayout log=section();heading(log,"本月銷售紀錄");
         for(int i=sales().length()-1;i>=0;i--){JSONObject x=sales().optJSONObject(i);if(x==null||!x.optString("date").startsWith(month.toString()))continue;
