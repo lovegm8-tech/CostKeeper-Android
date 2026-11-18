@@ -195,7 +195,7 @@ public class MainActivity extends Activity {
         LinearLayout title=row();pad(title,14,12);title.setBackgroundColor(GREEN);
         TextView app=text("餐飲成本管家",21,true);app.setTextColor(Color.WHITE);
         title.addView(app,new LinearLayout.LayoutParams(0,-2,1));
-        TextView offline=text("離線 · v"+BuildConfig.VERSION_NAME+"",12,false);offline.setTextColor(Color.WHITE);title.addView(offline);root.addView(title);
+        TextView offline=text("離線 · v"+BuildConfig.VERSION_NAME,12,false);offline.setTextColor(Color.WHITE);title.addView(offline);root.addView(title);
         LinearLayout nav=row();nav.setBackgroundColor(Color.WHITE);
         for(String[] item:new String[][]{{"首頁","home"},{"食材","ingredients"},{"餐點","recipes"},{"報表","reports"},{"備份","backup"}}){
             TextView n=text(item[0],13,item[1].equals(page));n.setGravity(Gravity.CENTER);n.setTextColor(item[1].equals(page)?GREEN:DARK);pad(n,2,15);
