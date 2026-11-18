@@ -1,19 +1,17 @@
 name: CostKeeper Android
 
 on:
-  workflow_dispatch:
   push:
+    branches: [main, 'feature/**']
+  pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - 'README.md'
-      - '.github/workflows/bootstrap.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  verify-debug:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,33 +27,37 @@ jobs:
           SDKMGR=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)
           test -n "$SDKMGR"
           "$SDKMGR" 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Build debug for compile check only
-        run: gradle --no-daemon :app:assembleDebug
-      - name: Compile unsigned release for offline signing
-        run: gradle --no-daemon :app:assembleRelease
-      - name: Include Android SDK APK v2 signer utility
+      - name: Verify package and version
+        shell: bash
         run: |
-          test -f "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar"
-          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" app/build/outputs/apk/release/apksigner.jar
-      - name: Upload unsigned release and signer utility (no credentials)
-        uses: actions/upload-artifact@v4
-        with:
-          name: CostKeeper-v1.0.2-unsigned-and-sign-tool
-          path: |
-            app/build/outputs/apk/release/*-unsigned.apk
-            app/build/outputs/apk/release/apksigner.jar
-          if-no-files-found: error
-          retention-days: 1
+          python3 - <<'PY'
+          import pathlib,re
+          s=pathlib.Path('app/build.gradle').read_text()
+          def value(pattern):
+              m=re.search(pattern,s)
+              if not m: raise SystemExit('Missing required version/package setting')
+              return m.group(1)
+          package=value(r"applicationId\s+'([^']+)'")
+          code=int(value(r'versionCode\s+(\d+)'))
+          version=value(r"versionName\s+'([^']+)'")
+          assert package=='tw.costkeeper.restaurant', 'Package ID changed'
+          assert code>=3, 'versionCode regression'
+          assert re.fullmatch(r'\d+\.\d+\.\d+',version), 'Invalid versionName'
+          print('Verified',package,version,code)
+          PY
+      - name: Compile test APK only
+        run: gradle --no-daemon :app:assembleDebug
 
   signed-release:
-    if: github.event_name == 'workflow_dispatch'
-    needs: verify-debug
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: verify
     runs-on: ubuntu-latest
     env:
       COSTKEEPER_STORE_PASSWORD: ${{ secrets.COSTKEEPER_STORE_PASSWORD }}
       COSTKEEPER_KEY_PASSWORD: ${{ secrets.COSTKEEPER_KEY_PASSWORD }}
       COSTKEEPER_KEY_ALIAS: ${{ secrets.COSTKEEPER_KEY_ALIAS }}
       COSTKEEPER_KEYSTORE_B64: ${{ secrets.COSTKEEPER_KEYSTORE_B64 }}
+      COSTKEEPER_CERT_SHA256: ${{ secrets.COSTKEEPER_CERT_SHA256 }}
       COSTKEEPER_KEYSTORE_PATH: ${{ github.workspace }}/release-key.p12
     steps:
       - uses: actions/checkout@v4
@@ -71,19 +73,49 @@ jobs:
           SDKMGR=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)
           test -n "$SDKMGR"
           "$SDKMGR" 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Validate secrets and restore signing key
+      - name: Restore release key
         shell: bash
         run: |
-          test -n "$COSTKEEPER_STORE_PASSWORD" && test -n "$COSTKEEPER_KEY_PASSWORD" && test -n "$COSTKEEPER_KEY_ALIAS" && test -n "$COSTKEEPER_KEYSTORE_B64" || { echo 'Missing signing secrets'; exit 1; }
+          test -n "$COSTKEEPER_STORE_PASSWORD" && test -n "$COSTKEEPER_KEY_PASSWORD" && test -n "$COSTKEEPER_KEY_ALIAS" && test -n "$COSTKEEPER_KEYSTORE_B64" && test -n "$COSTKEEPER_CERT_SHA256" || { echo 'Missing release secrets or expected certificate fingerprint'; exit 1; }
           printf '%s' "$COSTKEEPER_KEYSTORE_B64" | base64 -d > "$COSTKEEPER_KEYSTORE_PATH"
           chmod 600 "$COSTKEEPER_KEYSTORE_PATH"
-      - name: Compile officially signed APK
+      - name: Build signed release
         run: gradle --no-daemon :app:assembleRelease
-      - name: Upload signed APK
+      - name: Verify and name release
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)
+          test -n "$APK"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/apk-verification.txt
+          ACTUAL=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/apk-verification.txt | head -1 | tr '[:lower:]' '[:upper:]' | tr -d ': ')
+          EXPECTED=$(printf '%s' "$COSTKEEPER_CERT_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ': ')
+          test -n "$ACTUAL" && test "$ACTUAL" = "$EXPECTED" || { echo 'Signing certificate mismatch'; exit 1; }
+          BADGING=$("$AAPT" dump badging "$APK" | grep '^package:')
+          echo "$BADGING"
+          python3 - "$BADGING" <<'PY'
+          import pathlib,re,sys
+          badging=sys.argv[1]
+          build=pathlib.Path('app/build.gradle').read_text()
+          expected_name=re.search(r"versionName\s+'([^']+)'",build).group(1)
+          expected_code=re.search(r'versionCode\s+(\d+)',build).group(1)
+          assert "name='tw.costkeeper.restaurant'" in badging
+          assert "versionCode='"+expected_code+"'" in badging
+          assert "versionName='"+expected_name+"'" in badging
+          pathlib.Path('/tmp/release-version').write_text(expected_name)
+          PY
+          VERSION=$(cat /tmp/release-version)
+          mkdir -p verified-release
+          cp "$APK" "verified-release/CostKeeper-v${VERSION}-release.apk"
+          sha256sum "verified-release/CostKeeper-v${VERSION}-release.apk" > "verified-release/SHA256SUMS.txt"
+          printf 'Version: %s\nCommit: %s\nCertificate SHA-256: %s\n' "$VERSION" "$GITHUB_SHA" "$ACTUAL" > verified-release/RELEASE_INFO.txt
+      - name: Upload verified signed release
         uses: actions/upload-artifact@v4
         with:
-          name: CostKeeper-v1.0.2-signed
-          path: app/build/outputs/apk/release/*.apk
+          name: CostKeeper-verified-release
+          path: verified-release/
           if-no-files-found: error
       - name: Erase temporary signing key
         if: always()
