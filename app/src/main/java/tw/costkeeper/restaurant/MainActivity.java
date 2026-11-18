@@ -210,6 +210,120 @@ public class MainActivity extends Activity {
         });
         refill.run();
     }
+    private void showPriceEditor(String ingredientId){
+        JSONObject food=findFood(ingredientId);if(food==null)return;
+        LinearLayout form=column();pad(form,16,8);
+        form.addView(note("來源及生效日期分開儲存；補登舊價格不覆蓋較新的有效價格。"));
+        Spinner source=choices(new String[]{"店內實際","總部標準"},"店內實際");form.addView(source);
+        EditText price=edit("本次整批進價（元）","",true);form.addView(price);
+        EditText qty=edit("包裝數量","",true);form.addView(qty);
+        Spinner unit=choices(UNITS,food.optString("unit","克"));form.addView(unit);
+        EditText supplier=edit("供應商","",false);form.addView(supplier);
+        EditText note=edit("原因或備註（選填）","",false);form.addView(note);
+        LocalDate[] date={LocalDate.now()};
+        Button pick=button("價格生效日："+date[0],()->{});
+        pick.setOnClickListener(v->{
+            LocalDate t=date[0];
+            new DatePickerDialog(this,(picker,y,m,d)->{
+                date[0]=LocalDate.of(y,m+1,d);pick.setText("價格生效日："+date[0]);
+            },t.getYear(),t.getMonthValue()-1,t.getDayOfMonth()).show();
+        });form.addView(pick);
+        Runnable fill=()->{
+            String src=source.getSelectedItemPosition()==1?PriceHistory.HQ:PriceHistory.ACTUAL;
+            price.setText(PriceHistory.hasPrice(food,src)?num(PriceHistory.packPrice(food,src)):"");
+            qty.setText(PriceHistory.hasPrice(food,src)?num(PriceHistory.packQty(food,src)):num(food.optDouble("packQty",0)));
+            String which=PriceHistory.unit(food,src);
+            if(which.isEmpty())which=food.optString("unit","克");
+            for(int i=0;i<UNITS.length;i++)if(UNITS[i].equals(which))unit.setSelection(i);
+            supplier.setText(PriceHistory.supplier(food,src));
+        };
+        source.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent,View v,int position,long id){fill.run();}
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent){}
+        });
+        new AlertDialog.Builder(this).setTitle("記錄價格異動 · "+food.optString("name"))
+            .setView(form).setPositiveButton("預覽變動",(d,w)->{
+                String src=source.getSelectedItemPosition()==1?PriceHistory.HQ:PriceHistory.ACTUAL;
+                String u=unit.getSelectedItem().toString(),base=CostMath.baseUnit(u);
+                double p=value(price),q=value(qty);
+                if(valueText(price).isEmpty()||!Double.isFinite(p)||p<0||q<=0||
+                   !CostMath.baseUnit(food.optString("unit")).equals(base)){
+                    toast("請輸入正確價格、數量，且單位種類需與原配方相同");return;
+                }
+                if(date[0].isAfter(LocalDate.now())){toast("生效日期不能是未來");return;}
+                double previous=PriceHistory.unitCost(food,src),next=p/CostMath.toBase(q,u);
+                java.util.List<JSONObject> history=PriceHistory.records(db,ingredientId,src);
+                String latest=history.isEmpty()?"":history.get(history.size()-1).optString("date");
+                boolean backdated=!latest.isEmpty()&&date[0].toString().compareTo(latest)<0;
+                StringBuilder summary=new StringBuilder("來源："+PriceHistory.label(src)
+                    +"\n生效："+date[0]+"\n新價："+money(p)+" / "+num(q)+" "+u
+                    +"\n新單位成本："+money(next));
+                if(Double.isFinite(previous)){
+                    double delta=next-previous;
+                    summary.append("\n現在單位成本："+money(previous))
+                        .append("\n單位價差："+(delta>=0?"+":"")+money(delta));
+                    if(previous>0)summary.append(" ("+String.format(Locale.TAIWAN,"%+.2f%%",delta/previous*100)+")");
+                    if(!backdated){
+                        summary.append("\n\n受影響餐點（每份成本變動）：");
+                        int changes=0;
+                        for(int i=0;i<recipes().length();i++){
+                            JSONObject rec=recipes().optJSONObject(i);if(rec==null)continue;
+                            double impact=PriceHistory.impact(rec,ingredientId,delta);
+                            if(Math.abs(impact)>0.00001){
+                                summary.append("\n").append(rec.optString("name")).append(" ")
+                                    .append(impact>0?"+":"").append(money(impact));
+                                changes++;if(changes>=15){summary.append("\n…其餘請至配方查看");break;}
+                            }
+                        }
+                        if(changes==0)summary.append("\n沒有配方使用這項食材");
+                    }
+                } else summary.append("\n目前尚未設定此來源價格");
+                if(backdated)summary.append("\n\n這是補登歷史價格，不會修改當前成本與餐點毛利。");
+                new AlertDialog.Builder(this).setTitle("確認新增一筆價格紀錄")
+                    .setMessage(summary.toString())
+                    .setPositiveButton("確認保存",(x,y)->{
+                        if(blocked){toast("保護狀態無法修改");return;}
+                        try{
+                            PriceHistory.record(db,food,src,date[0].toString(),p,q,u,valueText(supplier),valueText(note));
+                            commit();
+                        }catch(Exception ex){toast("儲存進價失敗："+ex.getMessage());}
+                    }).setNegativeButton("取消",null).show();
+            }).setNegativeButton("返回",null).show();
+    }
+    private void showPriceHistory(String ingredientId){
+        JSONObject food=findFood(ingredientId);if(food==null){toast("該食材已刪除");return;}
+        StringBuilder out=new StringBuilder();
+        for(String source:new String[]{PriceHistory.ACTUAL,PriceHistory.HQ}){
+            out.append(PriceHistory.label(source)).append("：當前每")
+                .append(CostMath.baseUnit(food.optString("unit"))).append(" ")
+                .append(shownMoney(PriceHistory.unitCost(food,source))).append("\n");
+            java.util.List<JSONObject> list=PriceHistory.records(db,ingredientId,source);
+            if(list.isEmpty()){out.append("尚無進價歷史\n\n");continue;}
+            int start=Math.max(0,list.size()-30);
+            for(int i=list.size()-1;i>=start;i--){
+                JSONObject h=list.get(i);double p=h.optDouble("price");
+                double q=CostMath.toBase(h.optDouble("packQty",0),h.optString("unit"));
+                double now=q>0?p/q:Double.NaN;
+                Double previous=PriceHistory.previousUnitCost(list,i);
+                out.append("\n").append(h.optString("date")).append("  ").append(money(p))
+                    .append(" / ").append(num(h.optDouble("packQty"))).append(" ").append(h.optString("unit"));
+                if(previous!=null&&Double.isFinite(now)){
+                    out.append("，單位價差 ").append(now>=previous?"+":"").append(money(now-previous));
+                    if(previous>0)out.append(" (").append(String.format(Locale.TAIWAN,"%+.1f%%",(now-previous)/previous*100)).append(")");
+                }
+                if(!h.optString("supplier").isEmpty())out.append("\n供應商："+h.optString("supplier"));
+                if(!h.optString("note").isEmpty())out.append("\n備註："+h.optString("note"));
+                if(!h.optString("recordedAt").isEmpty())out.append("\n登錄："+h.optString("recordedAt"));
+                out.append("\n");
+            }
+            if(start>0)out.append("更早紀錄請從完整 Excel 查看\n");
+            out.append("\n");
+        }
+        ScrollView sc=new ScrollView(this);TextView detail=text(out.toString(),13,false);pad(detail,16,14);sc.addView(detail);
+        new AlertDialog.Builder(this).setTitle(food.optString("name")+" · 歷史進價")
+            .setView(sc).setPositiveButton("新增異動",(d,w)->showPriceEditor(ingredientId))
+            .setNegativeButton("關閉",null).show();
+    }
     private void showIngredientEditor(String id){
         JSONObject old=id==null?null:findFood(id);
         LinearLayout form=column();pad(form,16,8);
@@ -229,16 +343,15 @@ public class MainActivity extends Activity {
                     double before=old==null?Double.NaN:old.optDouble("price",Double.NaN);
                     double beforeQty=old==null?Double.NaN:old.optDouble("packQty",Double.NaN);
                     String beforeUnit=old==null?"":old.optString("unit");
-                    x.put("name",n).put("category",category.getSelectedItem().toString())
-                        .put("packQty",q).put("unit",unit.getSelectedItem().toString())
-                        .put("price",p).put("supplier",valueText(supplier));
+                    x.put("name",n).put("category",category.getSelectedItem().toString());
+                    if(old!=null&&!CostMath.baseUnit(beforeUnit).equals(CostMath.baseUnit(unit.getSelectedItem().toString()))){
+                        toast("無法更換食材單位類型，會破壞既有配方；請另建食材");return;
+                    }
                     CostMath.upsert(items(),x);
                     if(old==null||Double.compare(before,p)!=0||Double.compare(beforeQty,q)!=0||!beforeUnit.equals(unit.getSelectedItem().toString())){
-                        JSONObject entry=new JSONObject();entry.put("id",newId()).put("ingredientId",x.getString("id"))
-                           .put("date",LocalDate.now().toString()).put("price",p).put("packQty",q)
-                           .put("unit",unit.getSelectedItem().toString()).put("supplier",valueText(supplier));
-                        purchases().put(entry);
-                    }
+                        PriceHistory.record(db,x,PriceHistory.ACTUAL,LocalDate.now().toString(),p,q,
+                            unit.getSelectedItem().toString(),valueText(supplier),"食材資料編輯");
+                    } else x.put("supplier",valueText(supplier));
                     commit();
                 }catch(Exception e){toast("無法儲存食材："+e.getMessage());}
             })
