@@ -433,7 +433,7 @@ public class MainActivity extends Activity {
             double cost=CostMath.recipeCost(r,db,costSource),price=r.optDouble("price",0);
             LinearLayout card=section();card.addView(text(r.optString("name"),17,true));
             card.addView(text(PriceHistory.label(costSource)+"成本 "+shownMoney(cost)+"  ｜  店內售價 "+money(price),14,false));
-            card.addView(note("以所選來源計算毛利率："+shownMargin(price,cost)));
+            card.addView(note("以所選來源計算食材毛利率（未扣通路費）："+shownMargin(price,cost)));
             card.addView(button("檢視 / 編輯配方",()->showRecipeDetail(r.optString("id"))));
         }
     }
@@ -450,7 +450,7 @@ public class MainActivity extends Activity {
                 .append(shownMoney(itemCost*line.optDouble("qty")));
         }
         for(String c:CHANNELS){double price=CostMath.salePrice(recipe,c),profit=CostMath.netProfit(recipe,db,c,costSource);
-            sb.append("\n\n").append(c).append("售價 ").append(money(price)).append(" → 毛利 ").append(shownMoney(profit));
+            sb.append("\n\n").append(c).append("售價 ").append(money(price)).append(" → 每份貢獻毛利 ").append(shownMoney(profit));
         }
         new AlertDialog.Builder(this).setTitle(recipe.optString("name"))
             .setMessage(sb.toString()).setPositiveButton("編輯",(d,w)->showRecipeEditor(id))
@@ -605,7 +605,7 @@ public class MainActivity extends Activity {
             f.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
             startActivityForResult(f,XLSX_READ);
         }));
-        excel.addView(note("注意：目前 Excel 尚未包含每月營運費用，換機或更新前務必另外匯出密碼加密備份（.costbackup）。Excel 為明文，包含進貨成本與毛利。請勿傳到公開群組或無保護的共享資料夾。還原時會先檢查工作表與資料關聯，確認後才覆蓋本機資料。"));
+        excel.addView(note("Excel v4 已包含每月營運費用；仍建議另外匯出密碼加密備份（.costbackup）。Excel 為明文，包含進貨成本與營運費用。請勿傳到公開群組或無保護的共享資料夾。還原時會先檢查工作表與資料關聯，確認後才覆蓋本機資料。"));
         space(s,8);s.addView(note("重要：解除安裝或手機遺失會失去本機資料，請定期匯出備份並記住密碼。"));
         LinearLayout csv=section();heading(csv,"外部試算表資料匯入");
         csv.addView(note("可匯入 UTF-8 CSV，表頭：食材名稱,分類,進貨數量,單位,進貨總價,供應商。一般 CSV 是明文，僅在可信裝置存放。"));
