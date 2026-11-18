@@ -29,7 +29,12 @@ public final class CostMath {
         }
         return result;
     }
+    /** Existing callers continue to use actual procurement costs. */
     public static double recipeCost(JSONObject recipe, JSONObject db) {
+        return recipeCost(recipe,db,PriceHistory.ACTUAL);
+    }
+    /** HQ cost is undefined until every ingredient used in the recipe has an HQ price. */
+    public static double recipeCost(JSONObject recipe, JSONObject db,String source) {
         Map<String,JSONObject> foods=ingredientMap(db);
         JSONArray lines=recipe.optJSONArray("lines");
         double sum=0;
@@ -37,7 +42,10 @@ public final class CostMath {
             JSONObject x=lines.optJSONObject(i);
             if (x==null) continue;
             JSONObject food=foods.get(x.optString("ingredientId"));
-            if(food!=null) sum+=unitCost(food)*x.optDouble("qty",0);
+            if(food==null)return Double.NaN;
+            double each=PriceHistory.unitCost(food,source);
+            if(!Double.isFinite(each))return Double.NaN;
+            sum+=each*x.optDouble("qty",0);
         }
         return sum;
     }
@@ -52,8 +60,11 @@ public final class CostMath {
         return 0;
     }
     public static double netProfit(JSONObject recipe, JSONObject db, String channel) {
+        return netProfit(recipe,db,channel,PriceHistory.ACTUAL);
+    }
+    public static double netProfit(JSONObject recipe, JSONObject db, String channel,String source) {
         double price=salePrice(recipe,channel);
-        return price * (1-feeRate(recipe,channel)) - recipeCost(recipe,db);
+        return price * (1-feeRate(recipe,channel)) - recipeCost(recipe,db,source);
     }
     public static JSONObject find(JSONArray arr, String id) {
         for(int i=0;i<arr.length();i++) {JSONObject x=arr.optJSONObject(i); if(x!=null&&id.equals(x.optString("id")))return x;}
