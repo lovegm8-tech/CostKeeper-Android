@@ -40,7 +40,7 @@ jobs:
       - name: Upload unsigned release and signer utility (no credentials)
         uses: actions/upload-artifact@v4
         with:
-          name: CostKeeper-v1.0.1-unsigned-and-sign-tool
+          name: CostKeeper-v1.0.2-unsigned-and-sign-tool
           path: |
             app/build/outputs/apk/release/*-unsigned.apk
             app/build/outputs/apk/release/apksigner.jar
@@ -82,7 +82,7 @@ jobs:
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: CostKeeper-v1.0.1-signed
+          name: CostKeeper-v1.0.2-signed
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
       - name: Erase temporary signing key
