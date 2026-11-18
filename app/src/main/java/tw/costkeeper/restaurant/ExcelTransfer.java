@@ -30,14 +30,15 @@ import java.util.zip.ZipOutputStream;
  */
 public final class ExcelTransfer {
     private ExcelTransfer() {}
-    private static final String[] NAMES={"使用說明","食材","餐點","配方明細","進價紀錄","銷售紀錄"};
+    private static final String[] NAMES={"使用說明","食材","餐點","配方明細","進價紀錄","銷售紀錄","營運費用"};
     private static final String[][] HEADERS={
-        {"CostKeeperData","3"},
+        {"CostKeeperData","4"},
         {"ID","食材名稱","分類","進貨數量","單位","進貨總價","供應商","單位成本（參考）","總部進貨數量","總部單位","總部進貨總價","總部供應商"},
         {"ID","餐點名稱","店內售價","Uber售價","Uber抽成率%","Foodpanda售價","Foodpanda抽成率%","配方成本（參考）","店內毛利（參考）"},
         {"餐點ID","食材ID","使用量（標準單位）","餐點名稱（參考）","食材名稱（參考）"},
         {"ID","食材ID","日期","進價","進貨數量","單位","供應商","食材名稱（參考）","成本來源","登錄時間","備註"},
-        {"ID","日期","餐點ID","餐點名稱","通路","份數","銷售額","平台費","食材成本"}
+        {"ID","日期","餐點ID","餐點名稱","通路","份數","銷售額","平台費","食材成本"},
+        {"月份","租金","人工","水電","其他固定營運費用"}
     };
     private static final int MAX_FILE=30_000_000;
     private static final int MAX_ZIP_ENTRY=15_000_000;
@@ -93,11 +94,11 @@ public final class ExcelTransfer {
         List<List<V>> out=new ArrayList<>();
         List<V> header=new ArrayList<>();for(String h:HEADERS[index])header.add(s(h));out.add(header);
         if(index==0){
-            out.add(row(s("格式版本"),s("3")));
+            out.add(row(s("格式版本"),s("4")));
             out.add(row(s("重要"),s("此 Excel 包含營業成本、配方、售價等明文商業資料。請妥善保存。")));
             out.add(row(s("換機步驟"),s("新手機安裝相同 App → 備份 → 從 Excel 還原 → 選取本檔 → 確認覆蓋。")));
             out.add(row(s("編輯提醒"),s("可修改食材進價、配方用量、售價。請勿修改 ID、欄位名稱或刪除工作表；參考欄不作還原依據。")));
-            out.add(row(s("備份內容"),s("食材總部／實際雙價格、餐點配方、含生效日與登錄日的歷史價格、銷售快照。")));
+            out.add(row(s("備份內容"),s("食材總部／實際雙價格、餐點配方、歷史價格、銷售快照及按月營運費用。")));
             out.add(row(s("建議"),s("如有隱私要求，另請製作密碼加密備份。一般 Excel 本身不加密。")));
             return out;
         }
@@ -144,6 +145,18 @@ public final class ExcelTransfer {
                     out.add(row(s(x.optString("id")),s(x.optString("date")),s(x.optString("recipeId")),s(x.optString("recipeName")),
                         s(x.optString("channel")),n(x.optInt("qty")),n(x.optDouble("gross")),n(x.optDouble("fees")),n(x.optDouble("cost"))));
                 }break;
+            case 6:
+                JSONObject monthly=db.optJSONObject("monthlyExpenses");
+                if(monthly!=null){
+                    java.util.Iterator<String> months=monthly.keys();
+                    while(months.hasNext()){
+                        String m=months.next();JSONObject e=monthly.optJSONObject(m);if(e==null)continue;
+                        out.add(row(s(m),e.has("rent")?n(e.optDouble("rent")):s(""),
+                            e.has("labor")?n(e.optDouble("labor")):s(""),
+                            e.has("utilities")?n(e.optDouble("utilities")):s(""),
+                            e.has("other")?n(e.optDouble("other")):s("")));
+                    }
+                }break;
         }
         return out;
     }
@@ -162,7 +175,7 @@ public final class ExcelTransfer {
             rels.append("<Relationship Id=\"rId").append(i+1).append("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet").append(i+1).append(".xml\"/>");
         }
         workbook.append("</sheets><calcPr calcId=\"0\"/></workbook>");
-        rels.append("<Relationship Id=\"rId7\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>");
+        rels.append("<Relationship Id=\"rId"+(NAMES.length+1)+"\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>");
         entry(zip,"xl/workbook.xml",workbook.toString());entry(zip,"xl/_rels/workbook.xml.rels",rels.toString());
         entry(zip,"xl/styles.xml","<?xml version=\"1.0\" encoding=\"UTF-8\"?><styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font><font><b/><sz val=\"11\"/><color rgb=\"FFFFFFFF\"/><name val=\"Calibri\"/></font></fonts><fills count=\"3\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill><fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF0F766E\"/><bgColor indexed=\"64\"/></patternFill></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/></cellXfs></styleSheet>");
         for(int i=0;i<NAMES.length;i++)entry(zip,"xl/worksheets/sheet"+(i+1)+".xml",sheetXml(table(i,db)));
@@ -268,9 +281,9 @@ public final class ExcelTransfer {
     private static void headers(List<List<String>> all,int sheet)throws Exception{
         if(all.isEmpty())throw new IllegalArgumentException(NAMES[sheet]+" 無標頭");
         String[] keys=HEADERS[sheet];List<String> head=all.get(0);
-        int required=sheet==0?2:(sheet==1?7:sheet==2?7:sheet==3?3:sheet==4?7:9);
+        int required=sheet==0?2:(sheet==1?7:sheet==2?7:sheet==3?3:sheet==4?7:sheet==5?9:5);
         if(sheet==0){
-            if(!"CostKeeperData".equals(c(head,0))||(!"2".equals(c(head,1))&&!"3".equals(c(head,1))))
+            if(!"CostKeeperData".equals(c(head,0))||(!"2".equals(c(head,1))&&!"3".equals(c(head,1))&&!"4".equals(c(head,1))))
                 throw new IllegalArgumentException("不是成本管家完整 Excel 備份 v2/v3");
             return;
         }
@@ -295,14 +308,21 @@ public final class ExcelTransfer {
         List<String> shared=sharedStrings(zip.get("xl/sharedStrings.xml"));
         List<List<List<String>>> sheets=new ArrayList<>();
         for(int i=0;i<NAMES.length;i++){
-            String path=paths.get(NAMES[i]);if(path==null)throw new IllegalArgumentException("缺少「"+NAMES[i]+"」工作表");
+            String path=paths.get(NAMES[i]);
+            if(path==null){
+                if(i==6){sheets.add(null);continue;}
+                throw new IllegalArgumentException("缺少「"+NAMES[i]+"」工作表");
+            }
             List<List<String>> r=rows(zip.get(path),shared);headers(r,i);sheets.add(r);
         }
         String formatVersion=c(sheets.get(0).get(0),1);
         if(!"CostKeeperData".equals(c(sheets.get(0).get(0),0))||
-            (!"2".equals(formatVersion)&&!"3".equals(formatVersion)))
+            (!"2".equals(formatVersion)&&!"3".equals(formatVersion)&&!"4".equals(formatVersion)))
             throw new IllegalArgumentException("不是成本管家完整 Excel 備份 v2/v3");
-        boolean v3="3".equals(formatVersion);
+        boolean v3=!"2".equals(formatVersion);
+        boolean v4="4".equals(formatVersion);
+        if(v4&&sheets.get(6)==null)throw new IllegalArgumentException("v4 備份缺少營運費用工作表");
+        if(!v4&&sheets.get(6)!=null)throw new IllegalArgumentException("舊版備份不應包含營運費用工作表");
         if(v3){
             for(int i=8;i<HEADERS[1].length;i++)
                 if(!HEADERS[1][i].equals(c(sheets.get(1).get(0),i)))throw new IllegalArgumentException("食材雙成本欄位被修改");
@@ -360,6 +380,23 @@ public final class ExcelTransfer {
                 .put("recipeName",c(r,3)).put("channel",channel).put("qty",(int)qty)
                 .put("gross",d(c(r,6),"銷售額",false)).put("fees",d(c(r,7),"平台費",false))
                 .put("cost",d(c(r,8),"食材成本",false)));
+        }
+        if(v4){
+            JSONObject monthly=new JSONObject();
+            Set<String> seenMonths=new HashSet<>();
+            String[] keys={"rent","labor","utilities","other"};
+            for(List<String> row:sheets.get(6).subList(1,sheets.get(6).size())){
+                if(blank(row))continue;
+                String m=c(row,0);
+                try{if(!java.time.YearMonth.parse(m).toString().equals(m))throw new Exception();}
+                catch(Exception ex){throw new IllegalArgumentException("營運費用月份格式應為 YYYY-MM："+m);}
+                if(!seenMonths.add(m))throw new IllegalArgumentException("重複的營運費用月份："+m);
+                JSONObject entry=new JSONObject();
+                for(int k=0;k<keys.length;k++)if(!c(row,k+1).isEmpty())
+                    entry.put(keys[k],d(c(row,k+1),"營運費用 "+m+" "+keys[k],false));
+                monthly.put(m,entry);
+            }
+            db.put("monthlyExpenses",monthly);
         }
         return db;
     }

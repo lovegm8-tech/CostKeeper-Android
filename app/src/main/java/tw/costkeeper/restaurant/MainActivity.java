@@ -95,6 +95,61 @@ public class MainActivity extends Activity {
     private JSONArray recipes(){return db.optJSONArray("recipes");}
     private JSONArray sales(){return db.optJSONArray("sales");}
     private JSONArray purchases(){return db.optJSONArray("purchases");}
+    private JSONObject monthlyExpenses() {
+        JSONObject all=db.optJSONObject("monthlyExpenses");
+        if(all==null){all=new JSONObject();try{db.put("monthlyExpenses",all);}catch(Exception e){throw new IllegalStateException(e);}}
+        return all;
+    }
+    private void showOperatingExpenses(){
+        String key=month.toString();
+        JSONObject current=monthlyExpenses().optJSONObject(key);
+        LinearLayout form=column();pad(form,18,12);
+        form.addView(note("按月記錄固定營運費用。留空代表尚未確認；確認沒有費用請填 0。金額均為當月新台幣。"));
+        String[] keys={"rent","labor","utilities","other"};
+        String[] labels={"租金","人工","水電","其他固定營運費用"};
+        EditText[] fields=new EditText[keys.length];
+        for(int i=0;i<keys.length;i++){
+            form.addView(note(labels[i]));
+            fields[i]=edit(labels[i],current!=null&&current.has(keys[i])?num(current.optDouble(keys[i])):"",true);
+            form.addView(fields[i]);
+        }
+        new AlertDialog.Builder(this).setTitle(key+" 營運費用").setView(form)
+            .setPositiveButton("儲存",(d,w)->{
+                try{
+                    JSONObject entry=new JSONObject();
+                    for(int i=0;i<keys.length;i++){
+                        String raw=fields[i].getText().toString().trim();
+                        if(raw.isEmpty())continue;
+                        double amount=Double.parseDouble(raw);
+                        if(!Double.isFinite(amount)||amount<0)throw new IllegalArgumentException(labels[i]+"必須是非負數");
+                        entry.put(keys[i],amount);
+                    }
+                    monthlyExpenses().put(key,entry);commit();
+                }catch(Exception e){toast("無法儲存營運費用："+e.getMessage());}
+            }).setNegativeButton("取消",null).show();
+    }
+    private void showOperatingProfit(LinearLayout section,double contribution){
+        JSONObject entry=monthlyExpenses().optJSONObject(month.toString());
+        String[] keys={"rent","labor","utilities","other"};
+        String[] labels={"租金","人工","水電","其他固定營運費用"};
+        double total=0;boolean complete=true;
+        heading(section,"整店營業利益");
+        for(int i=0;i<keys.length;i++){
+            boolean known=entry!=null&&entry.has(keys[i]);
+            if(!known)complete=false;
+            double amount=known?entry.optDouble(keys[i]):0;
+            if(known)total+=amount;
+            section.addView(text(labels[i]+"："+(known?money(amount):"未記錄"),14,false));
+        }
+        section.addView(button("編輯 "+month+" 營運費用",this::showOperatingExpenses));
+        if(complete){
+            heading(section,"已記錄費用後營業利益估算："+money(contribution-total));
+            section.addView(note("仍需確認銷售是否完整、稅費、損耗及其他未列費用；不是稅後淨利。"));
+        }else{
+            heading(section,"營業利益：資料未完整");
+            section.addView(note("已確認固定費用合計 "+money(total)+"；缺少的費用不能視為 0。"));
+        }
+    }
     private JSONObject findFood(String id){return CostMath.find(items(),id);}
     private JSONObject findRecipe(String id){return CostMath.find(recipes(),id);}
     private String shownMoney(double x){return Double.isFinite(x)?money(x):"總部價格未設定";}
@@ -140,7 +195,7 @@ public class MainActivity extends Activity {
         LinearLayout title=row();pad(title,14,12);title.setBackgroundColor(GREEN);
         TextView app=text("餐飲成本管家",21,true);app.setTextColor(Color.WHITE);
         title.addView(app,new LinearLayout.LayoutParams(0,-2,1));
-        TextView offline=text("離線 · v1.0.2",12,false);offline.setTextColor(Color.WHITE);title.addView(offline);root.addView(title);
+        TextView offline=text("離線 · v"+BuildConfig.VERSION_NAME,12,false);offline.setTextColor(Color.WHITE);title.addView(offline);root.addView(title);
         LinearLayout nav=row();nav.setBackgroundColor(Color.WHITE);
         for(String[] item:new String[][]{{"首頁","home"},{"食材","ingredients"},{"餐點","recipes"},{"報表","reports"},{"備份","backup"}}){
             TextView n=text(item[0],13,item[1].equals(page));n.setGravity(Gravity.CENTER);n.setTextColor(item[1].equals(page)?GREEN:DARK);pad(n,2,15);
@@ -163,8 +218,8 @@ public class MainActivity extends Activity {
         heading(s,"本月銷售紀錄 · "+month);
         s.addView(text("已登記 "+qty+" 份     收入 "+money(total),14,false));
         s.addView(text("食材／包材成本 "+money(cost),14,false));
-        s.addView(text("扣平台費後毛利 "+money(total-fees-cost),17,true));
-        s.addView(note("不包含房租、人事、水電、稅金及未輸入的營業費用。"));
+        s.addView(text("扣食材及平台費後貢獻毛利 "+money(total-fees-cost),17,true));
+        s.addView(note("此數字尚未扣除固定營運費用，並非淨利；請至報表頁檢視整店營業利益。"));
         LinearLayout x=section();heading(x,"快速操作");bar(x,"＋ 新增食材",()->showIngredientEditor(null));
         bar(x,"＋ 新增餐點",()->showRecipeEditor(null));bar(x,"＋ 登記銷售",this::showSaleEditor);
         LinearLayout r=section();heading(r,"餐點成本預覽");
@@ -173,7 +228,7 @@ public class MainActivity extends Activity {
             JSONObject f=recipes().optJSONObject(i);if(f==null)continue;
             double c=CostMath.recipeCost(f,db,costSource),p=f.optDouble("price",0);
             bar(r,f.optString("name")+" · "+PriceHistory.label(costSource)+"成本 "+shownMoney(c)
-                +" · 毛利 "+(Double.isFinite(c)?money(p-c):"待補總部價"),()->showRecipeDetail(f.optString("id")));
+                +" · 扣食材後餘額 "+(Double.isFinite(c)?money(p-c):"待補總部價"),()->showRecipeDetail(f.optString("id")));
         }
     }
     private void drawIngredients(){
@@ -378,7 +433,7 @@ public class MainActivity extends Activity {
             double cost=CostMath.recipeCost(r,db,costSource),price=r.optDouble("price",0);
             LinearLayout card=section();card.addView(text(r.optString("name"),17,true));
             card.addView(text(PriceHistory.label(costSource)+"成本 "+shownMoney(cost)+"  ｜  店內售價 "+money(price),14,false));
-            card.addView(note("以所選來源計算毛利率："+shownMargin(price,cost)));
+            card.addView(note("以所選來源計算食材毛利率（未扣通路費）："+shownMargin(price,cost)));
             card.addView(button("檢視 / 編輯配方",()->showRecipeDetail(r.optString("id"))));
         }
     }
@@ -395,7 +450,7 @@ public class MainActivity extends Activity {
                 .append(shownMoney(itemCost*line.optDouble("qty")));
         }
         for(String c:CHANNELS){double price=CostMath.salePrice(recipe,c),profit=CostMath.netProfit(recipe,db,c,costSource);
-            sb.append("\n\n").append(c).append("售價 ").append(money(price)).append(" → 毛利 ").append(shownMoney(profit));
+            sb.append("\n\n").append(c).append("售價 ").append(money(price)).append(" → 每份貢獻毛利 ").append(shownMoney(profit));
         }
         new AlertDialog.Builder(this).setTitle(recipe.optString("name"))
             .setMessage(sb.toString()).setPositiveButton("編輯",(d,w)->showRecipeEditor(id))
@@ -506,8 +561,9 @@ public class MainActivity extends Activity {
         }
         s.addView(text("銷售份數："+count,15,false));s.addView(text("營業額："+money(gross),15,false));
         s.addView(text("食材與包材："+money(cost),15,false));s.addView(text("平台抽成："+money(fee),15,false));
-        heading(s,"估算毛利："+money(gross-fee-cost));
-        s.addView(note("毛利不等於淨利。未計入租金、人事、水電、營業稅、平台其他費用、損耗及未登記銷售。"));
+        heading(s,"全店貢獻毛利："+money(gross-fee-cost));
+        s.addView(note("以已登記銷售的食材／包材成本及平台抽成計算；未扣固定營運費用。"));
+        showOperatingProfit(s,gross-fee-cost);
         s.addView(button("＋ 登記一筆銷售",this::showSaleEditor));
         LinearLayout log=section();heading(log,"本月銷售紀錄");
         for(int i=sales().length()-1;i>=0;i--){JSONObject x=sales().optJSONObject(i);if(x==null||!x.optString("date").startsWith(month.toString()))continue;
@@ -549,7 +605,7 @@ public class MainActivity extends Activity {
             f.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
             startActivityForResult(f,XLSX_READ);
         }));
-        excel.addView(note("Excel 為明文，包含進貨成本與毛利。請勿傳到公開群組或無保護的共享資料夾。還原時會先檢查工作表與資料關聯，確認後才覆蓋本機資料。"));
+        excel.addView(note("Excel v4 已包含每月營運費用；仍建議另外匯出密碼加密備份（.costbackup）。Excel 為明文，包含進貨成本與營運費用。請勿傳到公開群組或無保護的共享資料夾。還原時會先檢查工作表與資料關聯，確認後才覆蓋本機資料。"));
         space(s,8);s.addView(note("重要：解除安裝或手機遺失會失去本機資料，請定期匯出備份並記住密碼。"));
         LinearLayout csv=section();heading(csv,"外部試算表資料匯入");
         csv.addView(note("可匯入 UTF-8 CSV，表頭：食材名稱,分類,進貨數量,單位,進貨總價,供應商。一般 CSV 是明文，僅在可信裝置存放。"));
