@@ -32,11 +32,11 @@ public final class ExcelTransfer {
     private ExcelTransfer() {}
     private static final String[] NAMES={"使用說明","食材","餐點","配方明細","進價紀錄","銷售紀錄"};
     private static final String[][] HEADERS={
-        {"CostKeeperData","2"},
-        {"ID","食材名稱","分類","進貨數量","單位","進貨總價","供應商","單位成本（參考）"},
+        {"CostKeeperData","3"},
+        {"ID","食材名稱","分類","進貨數量","單位","進貨總價","供應商","單位成本（參考）","總部進貨數量","總部單位","總部進貨總價","總部供應商"},
         {"ID","餐點名稱","店內售價","Uber售價","Uber抽成率%","Foodpanda售價","Foodpanda抽成率%","配方成本（參考）","店內毛利（參考）"},
         {"餐點ID","食材ID","使用量（標準單位）","餐點名稱（參考）","食材名稱（參考）"},
-        {"ID","食材ID","日期","進價","進貨數量","單位","供應商","食材名稱（參考）"},
+        {"ID","食材ID","日期","進價","進貨數量","單位","供應商","食材名稱（參考）","成本來源","登錄時間","備註"},
         {"ID","日期","餐點ID","餐點名稱","通路","份數","銷售額","平台費","食材成本"}
     };
     private static final int MAX_FILE=30_000_000;
@@ -93,11 +93,11 @@ public final class ExcelTransfer {
         List<List<V>> out=new ArrayList<>();
         List<V> header=new ArrayList<>();for(String h:HEADERS[index])header.add(s(h));out.add(header);
         if(index==0){
-            out.add(row(s("格式版本"),s("2")));
+            out.add(row(s("格式版本"),s("3")));
             out.add(row(s("重要"),s("此 Excel 包含營業成本、配方、售價等明文商業資料。請妥善保存。")));
             out.add(row(s("換機步驟"),s("新手機安裝相同 App → 備份 → 從 Excel 還原 → 選取本檔 → 確認覆蓋。")));
             out.add(row(s("編輯提醒"),s("可修改食材進價、配方用量、售價。請勿修改 ID、欄位名稱或刪除工作表；參考欄不作還原依據。")));
-            out.add(row(s("備份內容"),s("食材、餐點、配方明細、歷史進價與銷售快照。")));
+            out.add(row(s("備份內容"),s("食材總部／實際雙價格、餐點配方、含生效日與登錄日的歷史價格、銷售快照。")));
             out.add(row(s("建議"),s("如有隱私要求，另請製作密碼加密備份。一般 Excel 本身不加密。")));
             return out;
         }
@@ -106,8 +106,11 @@ public final class ExcelTransfer {
             case 1:
                 for(int i=0;i<ingredients.length();i++){
                     JSONObject x=ingredients.optJSONObject(i);if(x==null)continue;
+                    boolean hasHq=PriceHistory.hasPrice(x,PriceHistory.HQ);
                     out.add(row(s(x.optString("id")),s(x.optString("name")),s(x.optString("category")),
-                        n(x.optDouble("packQty")),s(x.optString("unit")),n(x.optDouble("price")),s(x.optString("supplier")),n(CostMath.unitCost(x))));
+                        n(x.optDouble("packQty")),s(x.optString("unit")),n(x.optDouble("price")),s(x.optString("supplier")),n(CostMath.unitCost(x)),
+                        hasHq?n(x.optDouble("hqPackQty")):s(""),s(hasHq?x.optString("hqUnit"):""),
+                        hasHq?n(x.optDouble("hqPrice")):s(""),s(hasHq?x.optString("hqSupplier"):"")));
                 }break;
             case 2:
                 for(int i=0;i<recipes.length();i++){
@@ -132,7 +135,8 @@ public final class ExcelTransfer {
                     JSONObject x=purchases.optJSONObject(i);if(x==null)continue;
                     JSONObject food=CostMath.find(ingredients,x.optString("ingredientId"));
                     out.add(row(s(x.optString("id")),s(x.optString("ingredientId")),s(x.optString("date")),n(x.optDouble("price")),
-                        n(x.optDouble("packQty")),s(x.optString("unit")),s(x.optString("supplier")),s(food==null?"歷史食材":food.optString("name"))));
+                        n(x.optDouble("packQty")),s(x.optString("unit")),s(x.optString("supplier")),s(food==null?"歷史食材":food.optString("name")),
+                        s(PriceHistory.source(x)),s(x.optString("recordedAt")),s(x.optString("note"))));
                 }break;
             case 5:
                 for(int i=0;i<sales.length();i++){
@@ -265,6 +269,11 @@ public final class ExcelTransfer {
         if(all.isEmpty())throw new IllegalArgumentException(NAMES[sheet]+" 無標頭");
         String[] keys=HEADERS[sheet];List<String> head=all.get(0);
         int required=sheet==0?2:(sheet==1?7:sheet==2?7:sheet==3?3:sheet==4?7:9);
+        if(sheet==0){
+            if(!"CostKeeperData".equals(c(head,0))||(!"2".equals(c(head,1))&&!"3".equals(c(head,1))))
+                throw new IllegalArgumentException("不是成本管家完整 Excel 備份 v2/v3");
+            return;
+        }
         for(int i=0;i<required;i++)if(!keys[i].equals(c(head,i)))throw new IllegalArgumentException(NAMES[sheet]+" 的第"+(i+1)+"欄標頭被修改");
     }
     private static double d(String s,String field,boolean positive)throws Exception{
@@ -289,14 +298,33 @@ public final class ExcelTransfer {
             String path=paths.get(NAMES[i]);if(path==null)throw new IllegalArgumentException("缺少「"+NAMES[i]+"」工作表");
             List<List<String>> r=rows(zip.get(path),shared);headers(r,i);sheets.add(r);
         }
-        if(!"CostKeeperData".equals(c(sheets.get(0).get(0),0))||!"2".equals(c(sheets.get(0).get(0),1)))throw new IllegalArgumentException("不是成本管家完整 Excel 備份 v2");
+        String formatVersion=c(sheets.get(0).get(0),1);
+        if(!"CostKeeperData".equals(c(sheets.get(0).get(0),0))||
+            (!"2".equals(formatVersion)&&!"3".equals(formatVersion)))
+            throw new IllegalArgumentException("不是成本管家完整 Excel 備份 v2/v3");
+        boolean v3="3".equals(formatVersion);
+        if(v3){
+            for(int i=8;i<HEADERS[1].length;i++)
+                if(!HEADERS[1][i].equals(c(sheets.get(1).get(0),i)))throw new IllegalArgumentException("食材雙成本欄位被修改");
+            for(int i=8;i<HEADERS[4].length;i++)
+                if(!HEADERS[4][i].equals(c(sheets.get(4).get(0),i)))throw new IllegalArgumentException("歷史價格欄位被修改");
+        }
         JSONObject db=SecureStore.blank();JSONArray ingredients=db.getJSONArray("ingredients"),recipes=db.getJSONArray("recipes"),purchases=db.getJSONArray("purchases"),sales=db.getJSONArray("sales");
         Set<String> foodIds=new HashSet<>(),recipeIds=new HashSet<>(),purchaseIds=new HashSet<>(),saleIds=new HashSet<>();
         for(List<String> r:sheets.get(1).subList(1,sheets.get(1).size())){
             if(blank(r))continue;
             String i=id(c(r,0)),name=required(c(r,1),"食材名稱"),un=unit(c(r,4));unique(foodIds,i,"食材");
-            ingredients.put(new JSONObject().put("id",i).put("name",name).put("category",c(r,2)).put("packQty",d(c(r,3),"進貨數量",true))
-                .put("unit",un).put("price",d(c(r,5),"進貨總價",false)).put("supplier",c(r,6)));
+            JSONObject food=new JSONObject().put("id",i).put("name",name).put("category",c(r,2)).put("packQty",d(c(r,3),"進貨數量",true))
+                .put("unit",un).put("price",d(c(r,5),"進貨總價",false)).put("supplier",c(r,6));
+            if(v3&&(!c(r,8).isEmpty()||!c(r,9).isEmpty()||!c(r,10).isEmpty())){
+                double hqQty=d(c(r,8),"總部進貨數量",true);
+                String hqUnit=unit(c(r,9));
+                if(!CostMath.baseUnit(un).equals(CostMath.baseUnit(hqUnit)))
+                    throw new IllegalArgumentException("總部進貨單位必須與原配方的標準單位相容");
+                food.put("hqPackQty",hqQty).put("hqUnit",hqUnit).put("hqPrice",d(c(r,10),"總部進貨總價",false))
+                    .put("hqSupplier",c(r,11));
+            }
+            ingredients.put(food);
         }
         for(List<String> r:sheets.get(2).subList(1,sheets.get(2).size())){
             if(blank(r))continue;String i=id(c(r,0));unique(recipeIds,i,"餐點");
@@ -315,9 +343,14 @@ public final class ExcelTransfer {
         }
         for(List<String> r:sheets.get(4).subList(1,sheets.get(4).size())){
             if(blank(r))continue;String i=id(c(r,0));unique(purchaseIds,i,"進價紀錄");
-            purchases.put(new JSONObject().put("id",i).put("ingredientId",c(r,1)).put("date",date(c(r,2)))
+            String source=v3?c(r,8):PriceHistory.ACTUAL;
+            if(!PriceHistory.ACTUAL.equals(source)&&!PriceHistory.HQ.equals(source))
+                throw new IllegalArgumentException("進價來源只能填 actual 或 hq");
+            JSONObject purchase=new JSONObject().put("id",i).put("ingredientId",c(r,1)).put("date",date(c(r,2)))
                 .put("price",d(c(r,3),"進價",false)).put("packQty",d(c(r,4),"進貨數量",true))
-                .put("unit",unit(c(r,5))).put("supplier",c(r,6)));
+                .put("unit",unit(c(r,5))).put("supplier",c(r,6)).put("source",source);
+            if(v3)purchase.put("recordedAt",c(r,9)).put("note",c(r,10));
+            purchases.put(purchase);
         }
         for(List<String> r:sheets.get(5).subList(1,sheets.get(5).size())){
             if(blank(r))continue;String i=id(c(r,0));unique(saleIds,i,"銷售紀錄");
