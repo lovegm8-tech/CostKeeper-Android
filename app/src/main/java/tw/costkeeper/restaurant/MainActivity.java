@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
     private JSONObject db;
     private LinearLayout root,content;
     private String page="home";
+    private String costSource=PriceHistory.ACTUAL;
     private YearMonth month=YearMonth.now();
     private char[] backupPassword;
     private boolean blocked=false;
@@ -96,6 +97,22 @@ public class MainActivity extends Activity {
     private JSONArray purchases(){return db.optJSONArray("purchases");}
     private JSONObject findFood(String id){return CostMath.find(items(),id);}
     private JSONObject findRecipe(String id){return CostMath.find(recipes(),id);}
+    private String shownMoney(double x){return Double.isFinite(x)?money(x):"總部價格未設定";}
+    private String shownMargin(double price,double cost){
+        return (price>0&&Double.isFinite(cost))?
+            String.format(Locale.TAIWAN,"%.1f%%",(price-cost)/price*100.0):"尚無完整成本";
+    }
+    private void costSwitcher(LinearLayout parent){
+        parent.addView(note("成本檢視來源（僅切換試算數據，不是隱私鎖）"));
+        LinearLayout switcher=row();
+        switcher.addView(button((PriceHistory.ACTUAL.equals(costSource)?"● ":"")+"店內實際",()->{
+            costSource=PriceHistory.ACTUAL;render();
+        }),new LinearLayout.LayoutParams(0,-2,1));
+        switcher.addView(button((PriceHistory.HQ.equals(costSource)?"● ":"")+"總部標準",()->{
+            costSource=PriceHistory.HQ;render();
+        }),new LinearLayout.LayoutParams(0,-2,1));
+        parent.addView(switcher);
+    }
     private EditText edit(String hint,String value,boolean number){
         EditText e=new EditText(this);e.setSingleLine(true);e.setTextSize(15);e.setHint(hint);e.setText(value==null?"":value);
         e.setInputType(number ? InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL|InputType.TYPE_NUMBER_FLAG_SIGNED : InputType.TYPE_CLASS_TEXT);
@@ -123,7 +140,7 @@ public class MainActivity extends Activity {
         LinearLayout title=row();pad(title,14,12);title.setBackgroundColor(GREEN);
         TextView app=text("餐飲成本管家",21,true);app.setTextColor(Color.WHITE);
         title.addView(app,new LinearLayout.LayoutParams(0,-2,1));
-        TextView offline=text("離線 · v1.0.1",12,false);offline.setTextColor(Color.WHITE);title.addView(offline);root.addView(title);
+        TextView offline=text("離線 · v1.0.2",12,false);offline.setTextColor(Color.WHITE);title.addView(offline);root.addView(title);
         LinearLayout nav=row();nav.setBackgroundColor(Color.WHITE);
         for(String[] item:new String[][]{{"首頁","home"},{"食材","ingredients"},{"餐點","recipes"},{"報表","reports"},{"備份","backup"}}){
             TextView n=text(item[0],13,item[1].equals(page));n.setGravity(Gravity.CENTER);n.setTextColor(item[1].equals(page)?GREEN:DARK);pad(n,2,15);
@@ -137,7 +154,8 @@ public class MainActivity extends Activity {
     }
     private void drawHome(){
         LinearLayout s=section();heading(s,"營運概覽");
-        s.addView(note("此處的餐點成本由最新進價計算，銷售報表則保存交易當時的成本快照。"));
+        s.addView(note("銷售報表以交易時店內實際成本快照計算；下方餐點預覽可切換總部標準成本。"));
+        costSwitcher(s);
         space(s,10);s.addView(text("食材 " +items().length()+" 項   ·   餐點 " +recipes().length()+" 道",17,true));
         double total=0,fees=0,cost=0;int qty=0;
         for(int i=0;i<sales().length();i++){JSONObject x=sales().optJSONObject(i);if(x==null||!x.optString("date").startsWith(month.toString()))continue;
@@ -153,12 +171,14 @@ public class MainActivity extends Activity {
         if(recipes().length()==0)r.addView(note("尚未建立餐點，請先新增食材後建立配方。"));
         for(int i=0;i<Math.min(8,recipes().length());i++){
             JSONObject f=recipes().optJSONObject(i);if(f==null)continue;
-            double c=CostMath.recipeCost(f,db),p=f.optDouble("price",0);
-            bar(r,f.optString("name")+" · 成本 "+money(c)+" · 毛利 "+money(p-c),()->showRecipeDetail(f.optString("id")));
+            double c=CostMath.recipeCost(f,db,costSource),p=f.optDouble("price",0);
+            bar(r,f.optString("name")+" · "+PriceHistory.label(costSource)+"成本 "+shownMoney(c)
+                +" · 毛利 "+(Double.isFinite(c)?money(p-c):"待補總部價"),()->showRecipeDetail(f.optString("id")));
         }
     }
     private void drawIngredients(){
-        LinearLayout top=section();heading(top,"食材與包材");top.addView(note("整包進貨量與進價，自動換算每克、毫升或每件成本。"));
+        LinearLayout top=section();heading(top,"食材與包材");top.addView(note("可為同一項食材分別保存總部標準價與自行採購價。不同來源的日期歷史不會互相覆蓋。"));
+        costSwitcher(top);
         top.addView(button("＋ 新增食材",()->showIngredientEditor(null)));
         EditText search=edit("搜尋食材名稱、分類或供應商", "",false);top.addView(search);
         LinearLayout found=column();content.addView(found);
@@ -172,8 +192,14 @@ public class MainActivity extends Activity {
                 found.addView(card,new LinearLayout.LayoutParams(-1,-2));space(found,8);
                 card.addView(text(f.optString("name"),16,true));
                 card.addView(note(f.optString("category","其他")+" · "+num(f.optDouble("packQty"))+" "+f.optString("unit")+"／批 · "+f.optString("supplier","")));
-                card.addView(text("進價 "+money(f.optDouble("price"))+"   ｜   每"+CostMath.baseUnit(f.optString("unit"))+" "+money(CostMath.unitCost(f)),14,false));
-                card.addView(button("編輯 / 更新進價",()->showIngredientEditor(f.optString("id"))));
+                double show=PriceHistory.unitCost(f,costSource);
+                card.addView(text(PriceHistory.label(costSource)+"單位成本："+shownMoney(show),14,false));
+                card.addView(note("店內："+money(PriceHistory.unitCost(f,PriceHistory.ACTUAL))
+                    +"  ｜  總部："+shownMoney(PriceHistory.unitCost(f,PriceHistory.HQ))));
+                String foodId=f.optString("id");
+                card.addView(button("＋ 記錄漲價／降價",()->showPriceEditor(foodId)));
+                card.addView(button("查看歷史與影響餐點",()->showPriceHistory(foodId)));
+                card.addView(button("編輯食材基本資料",()->showIngredientEditor(foodId)));
             }
             if(count==0)found.addView(note(items().length()==0?"尚未建立食材。":"沒有符合的食材。"));
         };
@@ -231,29 +257,32 @@ public class MainActivity extends Activity {
             .setPositiveButton("刪除",(d,w)->{CostMath.remove(items(),id);commit();}).setNegativeButton("取消",null).show();
     }
     private void drawRecipes(){
-        LinearLayout s=section();heading(s,"餐點配方");s.addView(note("每份配方可使用多個食材。成本會依最新食材進價同步更新。"));
+        LinearLayout s=section();heading(s,"餐點配方");s.addView(note("總部標準與店內實際共用同一份餐點配方，各自使用不同進價。"));
+        costSwitcher(s);
         s.addView(button("＋ 新增餐點",()->showRecipeEditor(null)));
         for(int i=0;i<recipes().length();i++){
             JSONObject r=recipes().optJSONObject(i);if(r==null)continue;
-            double cost=CostMath.recipeCost(r,db),price=r.optDouble("price",0);
+            double cost=CostMath.recipeCost(r,db,costSource),price=r.optDouble("price",0);
             LinearLayout card=section();card.addView(text(r.optString("name"),17,true));
-            card.addView(text("成本 "+money(cost)+"  ｜  店內售價 "+money(price),14,false));
-            if(price>0)card.addView(note("店內毛利率 "+String.format(Locale.TAIWAN,"%.1f%%",(price-cost)/price*100.0)));
+            card.addView(text(PriceHistory.label(costSource)+"成本 "+shownMoney(cost)+"  ｜  店內售價 "+money(price),14,false));
+            card.addView(note("以所選來源計算毛利率："+shownMargin(price,cost)));
             card.addView(button("檢視 / 編輯配方",()->showRecipeDetail(r.optString("id"))));
         }
     }
     private void showRecipeDetail(String id){
         JSONObject recipe=findRecipe(id);if(recipe==null)return;
-        double cost=CostMath.recipeCost(recipe,db);
-        StringBuilder sb=new StringBuilder("每份原料及包材成本："+money(cost)+"\n");
+        double cost=CostMath.recipeCost(recipe,db,costSource);
+        StringBuilder sb=new StringBuilder(PriceHistory.label(costSource)+"每份成本："+shownMoney(cost)+"\n");
         JSONArray lines=recipe.optJSONArray("lines");
         if(lines!=null)for(int i=0;i<lines.length();i++){
             JSONObject line=lines.optJSONObject(i);JSONObject food=findFood(line.optString("ingredientId"));if(food==null)continue;
+            double itemCost=PriceHistory.unitCost(food,costSource);
             sb.append("\n").append(food.optString("name")).append(" ").append(num(line.optDouble("qty"))).append(" ")
-                .append(CostMath.baseUnit(food.optString("unit"))).append("：").append(money(CostMath.unitCost(food)*line.optDouble("qty")));
+                .append(CostMath.baseUnit(food.optString("unit"))).append("：")
+                .append(shownMoney(itemCost*line.optDouble("qty")));
         }
-        for(String c:CHANNELS){double price=CostMath.salePrice(recipe,c),profit=CostMath.netProfit(recipe,db,c);
-            sb.append("\n\n").append(c).append("售價 ").append(money(price)).append(" → 毛利 ").append(money(profit));
+        for(String c:CHANNELS){double price=CostMath.salePrice(recipe,c),profit=CostMath.netProfit(recipe,db,c,costSource);
+            sb.append("\n\n").append(c).append("售價 ").append(money(price)).append(" → 毛利 ").append(shownMoney(profit));
         }
         new AlertDialog.Builder(this).setTitle(recipe.optString("name"))
             .setMessage(sb.toString()).setPositiveButton("編輯",(d,w)->showRecipeEditor(id))
@@ -378,9 +407,13 @@ public class MainActivity extends Activity {
             });
         }
         LinearLayout p=section();heading(p,"近期食材進價更新");
+        p.addView(note("總部與店內進價分開紀錄；價格生效日與登錄日可不同。"));
         int shown=0;for(int i=purchases().length()-1;i>=0&&shown<15;i--){JSONObject x=purchases().optJSONObject(i);if(x==null)continue;
             JSONObject food=findFood(x.optString("ingredientId"));
-            p.addView(note(x.optString("date")+"  "+(food==null?"已刪除食材":food.optString("name"))+"   "+money(x.optDouble("price"))));shown++;
+            String foodName=food==null?"已刪除食材":food.optString("name");
+            String id=x.optString("ingredientId");
+            bar(p,x.optString("date")+"  "+foodName+"（"+PriceHistory.label(PriceHistory.source(x))+"）"
+                +" "+money(x.optDouble("price")),()->showPriceHistory(id));shown++;
         }
     }
     private void drawBackup(){
@@ -412,7 +445,7 @@ public class MainActivity extends Activity {
             startActivityForResult(pick,CSV_READ);
         }));
         LinearLayout about=section();heading(about,"版本與更新");
-        about.addView(text("版本 v1.0.1  ·  tw.costkeeper.restaurant",14,false));
+        about.addView(text("版本 v1.0.2  ·  tw.costkeeper.restaurant",14,false));
         about.addView(note("未來用同一套件名稱及固定正式簽章、遞增版本號安裝新版 APK，即可保留本機資料。"));
         about.addView(note("單機版本：不支援多手機同步、雲端備份與自動更新。"));
     }
